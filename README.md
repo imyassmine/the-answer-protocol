@@ -1,38 +1,16 @@
+# TAP — a multiplayer text adventure in Go
+
 [![CI](https://github.com/imyassmine/tap/actions/workflows/ci.yml/badge.svg)](https://github.com/imyassmine/tap/actions/workflows/ci.yml)
+[![Go 1.26.8+](https://img.shields.io/badge/go-1.26.8%2B-00ADD8.svg)](https://go.dev/dl/)
+![Standard library only](https://img.shields.io/badge/dependencies-none-success.svg)
 
-# TAP — The Answer Protocol
+**A shared-world MUD on a line-based TCP protocol.** One Go server hosts an 8-room world — exits,
+items, NPCs, combat, quests and groups — and two interchangeable clients (terminal and browser) speak
+the same RFC 42TAP lines. Standard library only, no external dependencies.
 
-A multiplayer text adventure (MUD) written in Go: one TCP server hosting a shared world, and two interchangeable clients (terminal and browser) speaking the line-based **RFC 42TAP** protocol.
-
-Built during the 42 common core as a two-person project — standard library only, no external dependencies.
-
-## Features
-
-- **Shared 8-room world** loaded from `data/world.json` (rooms, exits, items, NPCs, quests) and validated at startup.
-- **Multiplayer**: per-room presence, global/room/group chat, floor items, groups, live player count.
-- **Combat**: `ATTACK` / `DEFEND` / `FLEE` / `STATUS`, deterministic rounds, respawn on defeat.
-- **Quests**: static, data-driven definitions exposed through `QUEST` / `QUESTS`.
-- **Two clients**: raw-protocol CLI, and a Go-served web client with quick actions and separate room/chat/log panes.
-- **Observability**: structured JSON logs (`log/slog`) for traffic, world changes and anomalies.
-
-## Quick start
-
-```bash
-make build           # compile server + both clients into bin/
-make run-server      # terminal 1 — TCP :4242
-make run-client      # terminal 2 — CLI client
-make run-client-gui  # terminal 3 — web client on http://127.0.0.1:8080
-```
-
-Requires Go 1.26.8+ (as pinned in `go.mod`), `make` and a C toolchain for the race-enabled `run-*` targets. Run from the repository root: the server loads `data/world.json` relatively. `make help` lists every target.
-
-## Protocol
-
-Commands: `CONNECT`, `LOOK`, `MOVE`, `TAKE`, `DROP`, `INVENTORY`, `TALK`, `CHAT`, `GROUP`, `ATTACK`, `DEFEND`, `FLEE`, `STATUS`, `QUEST`, `QUESTS`, `WHO`, `QUIT`.
-
-One UTF-8 message per line (1024-byte maximum). Replies are `OK ...` or `ERR <code> <NAME>`; asynchronous events are `EVT ...`. Chat and dialogue text is sanitized. Full specification: [`rfc/protocol-rfc.html`](rfc/protocol-rfc.html) (open it locally in a browser).
-
-```text
+```console
+$ make run-server   # TCP :4242
+$ make run-client
 > CONNECT alice
 OK connected
 EVT STATS players=1
@@ -45,44 +23,63 @@ EVT GLOBAL CHAT alice hello
 OK
 ```
 
-## Architecture
+## Highlights
 
-- **Connection model** — accept loop, one goroutine per connection, plus a writer goroutine per client draining a buffered channel. Replies and asynchronous `EVT` messages share it: ordering is preserved and a slow client cannot block other players — its queue fills, messages are dropped with a WARN, and a write deadline closes the connection if it stops reading.
-- **State** — players, floor items, NPC state and groups live behind a single `sync.Mutex`; each command is atomic and race-free. Server helpers called with the lock already held are suffixed `Locked`.
-- **Dispatch** — one line = one message. The command name is case-insensitive and routed to a dedicated handler (`cmdLook`, `cmdMove`, ...); handlers are grouped by feature (movement, combat, chat, groups, ...).
-- **World loading** — unknown JSON fields are rejected, then `Validate()` checks the start room, exits, cross-references, NPC dialogue and quest targets/rewards. The server refuses to start on invalid data.
-- **Logging** — `log/slog` JSON on stderr: INFO for traffic and world changes, WARN for anomalies such as dropped messages, ERROR for failures. Structured attributes, not formatted strings.
+- **Protocol-first design**: one UTF-8 message per line (≤1024 B), `OK ...` / `ERR <code> <NAME>`
+  replies, asynchronous `EVT ...` events. Commands are case-insensitive and routed to a dedicated
+  handler by feature; chat, dialogue and player names are sanitized.
+- **Concurrency without head-of-line blocking**: one goroutine per connection plus a writer goroutine
+  per client draining a buffered channel. Replies and events share the queue, so ordering is preserved;
+  a client that stops reading is dropped with a WARN and closed by a write deadline instead of stalling
+  the server.
+- **Single source of truth**: players, floor items, NPC state and groups live behind one `sync.Mutex`,
+  so every command is atomic. The world is loaded from `data/world.json` with unknown fields rejected
+  and cross-references validated at startup — the server refuses to start on invalid data.
+- **Gameplay**: deterministic combat (`ATTACK` / `DEFEND` / `FLEE` / `STATUS`, respawn on defeat),
+  global/room/group chat, floor items, groups, and static quest definitions exposed via `QUEST` /
+  `QUESTS`.
+- **Observability & quality**: structured JSON logs (`log/slog`) with INFO/WARN/ERROR records,
+  race-enabled `make run-*` targets, unit tests, and a GitHub Actions pipeline running gofmt,
+  `go vet`, `go test -race` and a full build on every push.
 
-## Design decisions
+## Quick start
 
-- **One mutex, not per-room locks** — commands are short; a single lock keeps atomicity trivial to reason about and removes a whole class of ordering bugs.
-- **Combat resolved inside one command** (no tick loop or timers) — deterministic and self-contained; `DEFEND` / `FLEE` add tactical choices without a turn scheduler.
-- **In-memory state** — the JSON world is the source of truth; restarts reset the game, which keeps the project dependency-free.
-- **RFC deviations are deliberate and documented in this README** — `TALK` / `WHO` use the RFC reply format, `GROUP JOIN` accepts any member of the target group (invites are notifications only), `QUEST` / `QUESTS` expose static definitions by id (no player progression), and `DEFEND` / `FLEE`, `EVT ROOM COMBAT` plus extra error codes extend the base protocol.
-
-## Layout
-
-```
-cmd/server/      TCP server, dispatcher, command handlers by feature
-cmd/client/      terminal client (sends raw protocol lines)
-cmd/gui/         browser client (HTTP server bridging the UI to a TCP connection)
-internal/world/  world model, JSON loader and validation
-data/world.json  rooms, items, NPCs, quests
-rfc/             protocol specification
-```
-
-## Testing
+Go 1.26.8+ and `make` (a C toolchain is needed for the race-enabled `run-*` targets). Run from the
+repository root: the server loads `data/world.json` relatively.
 
 ```bash
-make test   # go test -race ./...
+git clone https://github.com/imyassmine/tap.git && cd tap
+make build           # server + terminal client + web client into bin/
+make run-server      # terminal 1 — TCP :4242
+make run-client      # terminal 2 — terminal client
+make run-client-gui  # terminal 3 — web client on http://127.0.0.1:8080
+make test            # go test -race ./...
 ```
 
-The suite covers world loading and validation, text sanitization, combat rules and the web client's message parsing/escaping. CI runs formatting, `go vet`, the race-enabled tests and a full build on every push.
+In the web client, enter a player name and press Connect — `CONNECT` is sent automatically. The full
+protocol (17 commands, framing, error codes, async events) is specified in
+[`rfc/protocol-rfc.html`](rfc/protocol-rfc.html) (open it locally in a browser).
 
-## License
+## Architecture
 
-MIT — see [LICENSE](LICENSE). The protocol specification in `rfc/` is © 42 School and is not covered by the MIT license.
+```
+cmd/server/      TCP server, dispatcher, command handlers grouped by feature
+cmd/client/      terminal client (raw protocol lines)
+cmd/gui/         browser client (HTTP server bridging the UI to a TCP connection)
+internal/world/  world model, JSON loader and startup validation
+data/world.json  8 rooms, 4 items, 4 NPCs, 2 quests
+```
 
-## Credits
+**Stack:** Go 1.26 · standard library · `log/slog` · `html/template` · GitHub Actions
 
-Started as a two-person project with **hrezvani** during the 42 common core and maintained by [**yassabda**](https://github.com/imyassmine).
+**Design notes:** combat is resolved inside one command (no tick loop or timers) and the world is
+in-memory, so restarts reset it. RFC deviations are deliberate and documented here: `TALK` / `WHO`
+reply formats, `GROUP JOIN` by any member (invites are notifications), `QUEST` / `QUESTS` as static
+definitions by id (no progression), plus `DEFEND` / `FLEE`, `EVT ROOM COMBAT` and extra error codes.
+
+**Roadmap:** persistent world state, an automated RFC conformance suite, and periodic refresh in the
+web client.
+
+---
+*Built at [42 Paris](https://42.fr) by [Yassmine Abdallah (@imyassmine)](https://github.com/imyassmine)
+— pair project with **hrezvani**. [MIT licensed](LICENSE); the protocol spec under `rfc/` is © 42 School.*
