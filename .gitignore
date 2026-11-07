@@ -1,5 +1,9 @@
 # Documentation
 *.pdf
-tap-serveur.md
-go-trainer/
-go.html
+
+# Build artifacts and local logs
+/bin/
+*.log
+
+# OS metadata
+.DS_Store

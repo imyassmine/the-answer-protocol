@@ -3,7 +3,6 @@ package main
 import (
 	"log/slog"
 	"strings"
-	"unicode"
 )
 
 func (s *Server) cmdChat(p *Player, args string) string {
@@ -31,16 +30,6 @@ func (s *Server) cmdChat(p *Player, args string) string {
 	return "OK"
 }
 
-func cleanText(text string) string {
-	text = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, text)
-	return strings.TrimSpace(text)
-}
-
 func (s *Server) pushAllLocked(msg string) {
 	for _, p := range s.players {
 		p.push(msg)
@@ -53,6 +42,12 @@ func (s *Server) pushRoomLocked(roomID, except, msg string) {
 			p.push(msg)
 		}
 	}
+}
+
+// notifyRoomChangeLocked announces a player leaving one room and entering another.
+func (s *Server) notifyRoomChangeLocked(from, to, name string) {
+	s.pushRoomLocked(from, name, "EVT ROOM PRESENCE LEAVE "+name)
+	s.pushRoomLocked(to, name, "EVT ROOM PRESENCE ENTER "+name)
 }
 
 func (player *Player) push(msg string) {

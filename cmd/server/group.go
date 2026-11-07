@@ -12,6 +12,14 @@ type Group struct {
 	Members []string
 }
 
+// removeMemberLocked removes a player from the group (the group may end up empty).
+// The caller must hold s.mtx.
+func (g *Group) removeMemberLocked(name string) {
+	g.Members = slices.DeleteFunc(g.Members, func(member string) bool {
+		return member == name
+	})
+}
+
 func (s *Server) cmdGroup(p *Player, args string) string {
 	sub, text, _ := strings.Cut(args, " ")
 	sub = strings.ToUpper(sub)
@@ -67,8 +75,10 @@ func (s *Server) cmdGroupInvite(p *Player, args string) string {
 }
 
 func (s *Server) pushGroupLocked(g *Group, msg string) {
-	for _, m := range g.Members {
-		s.players[m].push(msg)
+	for _, name := range g.Members {
+		if member, ok := s.players[name]; ok {
+			member.push(msg)
+		}
 	}
 }
 
@@ -100,9 +110,7 @@ func (s *Server) cmdGroupLeave(p *Player, args string) string {
 	if g == nil {
 		return "ERR 401 NOT_IN_GROUP"
 	}
-	g.Members = slices.DeleteFunc(g.Members, func(n string) bool {
-		return n == p.Name
-	})
+	g.removeMemberLocked(p.Name)
 	p.Group = nil
 	s.pushGroupLocked(g, "EVT GROUP LEAVE "+p.Name)
 	slog.Info("user left", "player", p.Name, "group", g.ID)

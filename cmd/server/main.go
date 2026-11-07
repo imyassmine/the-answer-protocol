@@ -11,15 +11,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"tap/internal/world"
+	"time"
 	"unicode/utf8"
+
+	"github.com/imyassmine/tap/internal/world"
 )
 
 const (
-	port        = ":4242"
-	greeting    = "OK hello proto=1"
-	maxLineSize = 1024
-	playerMaxHP = 100
+	port         = ":4242"
+	greeting     = "OK hello proto=1"
+	maxLineSize  = 1024
+	playerMaxHP  = 100
+	writeTimeout = 5 * time.Second
 )
 
 type Player struct {
@@ -35,7 +38,6 @@ type Player struct {
 
 type NPCState struct {
 	HP    int
-	MaxHP int
 	Alive bool
 }
 
@@ -59,7 +61,7 @@ func NewServer(w *world.World) *Server {
 		s.roomItems[id] = slices.Clone(r.Items)
 	}
 	for id, n := range w.NPCs {
-		s.npcs[id] = &NPCState{HP: n.HP, MaxHP: n.HP, Alive: true}
+		s.npcs[id] = &NPCState{HP: n.HP, Alive: true}
 	}
 	return s
 }
@@ -79,7 +81,7 @@ func main() {
 		slog.Error("failed to start server", "port", port, "error", err)
 		os.Exit(1)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	slog.Info("server listening", "port", port)
 	srv := NewServer(w)
 	for {
@@ -94,9 +96,8 @@ func main() {
 
 func (s *Server) handleConn(conn net.Conn) {
 	remote := conn.RemoteAddr().String()
-	name := ""
 	var p *Player
-	ch := make(chan string, 64) //channel bufferisé
+	ch := make(chan string, 64) // buffered outbound queue
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		writeLoop(conn, remote, ch)
@@ -116,7 +117,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		close(ch)
 		wg.Wait()
 		_ = conn.Close()
-		slog.Info("client disconnected", "remote", remote, "player", name)
+		slog.Info("client disconnected", "remote", remote, "player", playerName(p))
 	}()
 	reply(greeting)
 	scanner := bufio.NewScanner(conn)
@@ -131,7 +132,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		command, args, _ := strings.Cut(line, " ")
 		command = strings.ToUpper(command)
 		args = strings.TrimSpace(args)
-		slog.Info("command received", "remote", remote, "player", name,
+		slog.Info("command received", "remote", remote, "player", playerName(p),
 			"command", command, "args", args)
 		if p == nil && command != "CONNECT" && command != "QUIT" {
 			reply("ERR 202 NOT_AUTHENTICATED")
@@ -139,13 +140,13 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		switch command {
 		case "CONNECT":
-			if p != nil || args == "" || !utf8.ValidString(args) {
+			name := cleanText(args)
+			if p != nil || name == "" || !utf8.ValidString(args) {
 				reply("ERR 400 BAD_REQUEST")
-			} else if p = s.register(args, ch); p == nil {
+			} else if p = s.register(name, ch); p == nil {
 				reply("ERR 201 NAME_IN_USE")
 			} else {
-				name = cleanText(p.Name)
-				slog.Info("player connected", "remote", remote, "player", name)
+				slog.Info("player connected", "remote", remote, "player", playerName(p))
 				reply("OK connected")
 				s.announceJoin(p)
 			}
@@ -167,7 +168,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		case "INVENTORY":
 			reply(s.cmdInventory(p, args))
 		case "QUESTS":
-			reply(s.cmdQuests(p, args))
+			reply(s.cmdQuests(args))
 		case "QUEST":
 			reply(s.cmdQuest(p, args))
 		case "TALK":
@@ -196,6 +197,7 @@ func (s *Server) handleConn(conn net.Conn) {
 
 func writeLoop(conn net.Conn, remote string, ch <-chan string) {
 	for msg := range ch {
+		_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		if _, err := io.WriteString(conn, msg+"\n"); err != nil {
 			slog.Warn("send failed", "remote", remote, "error", err)
 			_ = conn.Close()
@@ -203,6 +205,14 @@ func writeLoop(conn net.Conn, remote string, ch <-chan string) {
 		}
 		slog.Info("response sent", "remote", remote, "response", msg)
 	}
+}
+
+// playerName returns the player name, or "" before CONNECT.
+func playerName(p *Player) string {
+	if p == nil {
+		return ""
+	}
+	return p.Name
 }
 
 func (s *Server) register(name string, ch chan string) *Player {
@@ -226,7 +236,7 @@ func (s *Server) announceJoin(p *Player) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 	s.pushRoomLocked(p.Room, p.Name, "EVT ROOM PRESENCE ENTER "+p.Name)
-	s.pushAllLocked("EVT STATS players=" + strconv.Itoa(len(s.players)))
+	s.pushPlayerCountLocked()
 }
 
 func (s *Server) unregister(p *Player) {
@@ -239,11 +249,14 @@ func (s *Server) unregister(p *Player) {
 		p.Inventory = nil
 	}
 	if g := p.Group; g != nil {
-		g.Members = slices.DeleteFunc(g.Members, func(n string) bool {
-			return n == p.Name
-		})
+		g.removeMemberLocked(p.Name)
 		s.pushGroupLocked(g, "EVT GROUP LEAVE "+p.Name)
 	}
 	s.pushRoomLocked(p.Room, "", "EVT ROOM PRESENCE LEAVE "+p.Name)
+	s.pushPlayerCountLocked()
+}
+
+// pushPlayerCountLocked broadcasts the number of connected players.
+func (s *Server) pushPlayerCountLocked() {
 	s.pushAllLocked("EVT STATS players=" + strconv.Itoa(len(s.players)))
 }

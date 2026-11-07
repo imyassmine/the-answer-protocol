@@ -9,6 +9,7 @@ import (
 const (
 	defaultPlayerAttackDamage = 15
 	defaultNPCCounterDamage   = 10
+	defendingCounterDamage    = defaultNPCCounterDamage / 2
 	respawnHP                 = 50
 )
 
@@ -17,6 +18,12 @@ type attackReply struct {
 	TargetHP   int    `json:"target_hp"`
 	Damage     int    `json:"damage"`
 	Status     string `json:"status"`
+}
+
+type statusReply struct {
+	HP     int    `json:"hp"`
+	MaxHP  int    `json:"max_hp"`
+	Status string `json:"status"`
 }
 
 func (s *Server) cmdStatus(p *Player, args string) string {
@@ -32,7 +39,12 @@ func (s *Server) cmdStatus(p *Player, args string) string {
 	} else if p.HP < p.MaxHP {
 		status = "wounded"
 	}
-	return fmt.Sprintf("OK {\"hp\": %d, \"max_hp\": %d, \"status\": %q}", p.HP, p.MaxHP, status)
+	data, err := json.Marshal(statusReply{HP: p.HP, MaxHP: p.MaxHP, Status: status})
+	if err != nil {
+		slog.Error("status response marshal failed", "player", p.Name, "error", err)
+		return "ERR 500 INTERNAL_ERROR"
+	}
+	return "OK " + string(data)
 }
 
 func (s *Server) cmdDefend(p *Player, args string) string {
@@ -83,7 +95,7 @@ func (s *Server) cmdAttack(p *Player, args string) string {
 		if state.Alive {
 			counterDamage = defaultNPCCounterDamage
 			if p.IsDefending {
-				counterDamage = defaultNPCCounterDamage / 2
+				counterDamage = defendingCounterDamage
 				p.IsDefending = false
 			}
 			p.HP -= counterDamage
@@ -112,8 +124,7 @@ func (s *Server) cmdAttack(p *Player, args string) string {
 		s.pushRoomLocked(fightRoom, p.Name, fmt.Sprintf("EVT ROOM COMBAT %s %s %d %d %s",
 			p.Name, id, damageToNPC, state.HP, status))
 		if status == "defeated" && fightRoom != s.world.Start {
-			s.pushRoomLocked(fightRoom, p.Name, "EVT ROOM PRESENCE LEAVE "+p.Name)
-			s.pushRoomLocked(s.world.Start, p.Name, "EVT ROOM PRESENCE ENTER "+p.Name)
+			s.notifyRoomChangeLocked(fightRoom, s.world.Start, p.Name)
 		}
 
 		slog.Info("combat attack", "player", p.Name, "npc", id, "damage", damageToNPC, "target_hp", state.HP, "attacker_hp", p.HP)
@@ -133,8 +144,9 @@ func (s *Server) cmdFlee(p *Player, args string) string {
 	p.Room = s.world.Start
 	p.IsDefending = false
 
-	s.pushRoomLocked(from, p.Name, "EVT ROOM PRESENCE LEAVE "+p.Name)
-	s.pushRoomLocked(s.world.Start, p.Name, "EVT ROOM PRESENCE ENTER "+p.Name)
+	if from != s.world.Start {
+		s.notifyRoomChangeLocked(from, s.world.Start, p.Name)
+	}
 	slog.Info("player fled from combat", "player", p.Name, "from", from, "to", s.world.Start)
 	return fmt.Sprintf("OK room=%s", s.world.Start)
 }

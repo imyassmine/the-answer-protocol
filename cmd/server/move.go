@@ -14,8 +14,7 @@ func (s *Server) cmdMove(p *Player, args string) string {
 		return "ERR 301 NO_EXIT"
 	}
 	p.Room = target
-	s.pushRoomLocked(from, p.Name, "EVT ROOM PRESENCE LEAVE "+p.Name)
-	s.pushRoomLocked(target, p.Name, "EVT ROOM PRESENCE ENTER "+p.Name)
+	s.notifyRoomChangeLocked(from, target, p.Name)
 	slog.Info("player moved", "player", p.Name, "from", from, "to", target)
 	return "OK room=" + target
 }

@@ -3,6 +3,7 @@ package world
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 )
 
@@ -48,7 +49,7 @@ func Load(path string) (*World, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var w World
 	decoder := json.NewDecoder(f)
 	decoder.DisallowUnknownFields()
@@ -61,42 +62,42 @@ func Load(path string) (*World, error) {
 	return &w, nil
 }
 
-func (world *World) Validate() error {
+func (w *World) Validate() error {
 	var errs []error
-	if _, ok := world.Rooms[world.Start]; !ok {
-		errs = append(errs, errors.New("start room does not exist"))
+	if _, ok := w.Rooms[w.Start]; !ok {
+		errs = append(errs, fmt.Errorf("start room %q does not exist", w.Start))
 	}
-	for _, room := range world.Rooms {
-		for _, target := range room.Exits {
-			if _, ok := world.Rooms[target]; !ok {
-				errs = append(errs, errors.New("exit doesn't lead to an existing room"))
+	for roomID, room := range w.Rooms {
+		for direction, target := range room.Exits {
+			if _, ok := w.Rooms[target]; !ok {
+				errs = append(errs, fmt.Errorf("room %q: exit %q leads to unknown room %q", roomID, direction, target))
 			}
 		}
 		for _, itemID := range room.Items {
-			if _, ok := world.Items[itemID]; !ok {
-				errs = append(errs, errors.New("item does not exist"))
+			if _, ok := w.Items[itemID]; !ok {
+				errs = append(errs, fmt.Errorf("room %q: unknown item %q", roomID, itemID))
 			}
 		}
 		for _, npcID := range room.NPCs {
-			if _, ok := world.NPCs[npcID]; !ok {
-				errs = append(errs, errors.New("NPC does not exist"))
+			if _, ok := w.NPCs[npcID]; !ok {
+				errs = append(errs, fmt.Errorf("room %q: unknown NPC %q", roomID, npcID))
 			}
 		}
 	}
-	for _, npc := range world.NPCs {
+	for npcID, npc := range w.NPCs {
 		if len(npc.Dialogue) == 0 {
-			errs = append(errs, errors.New("NPC has no dialogue"))
+			errs = append(errs, fmt.Errorf("NPC %q has no dialogue", npcID))
 		}
 	}
-	for _, quest := range world.Quests {
-		_, isItem := world.Items[quest.Target]
-		_, isNPC := world.NPCs[quest.Target]
+	for questID, quest := range w.Quests {
+		_, isItem := w.Items[quest.Target]
+		_, isNPC := w.NPCs[quest.Target]
 		if !isItem && !isNPC {
-			errs = append(errs, errors.New("quest: target does not exist"))
+			errs = append(errs, fmt.Errorf("quest %q: unknown target %q", questID, quest.Target))
 		}
 		if quest.Reward != "" {
-			if _, ok := world.Items[quest.Reward]; !ok {
-				errs = append(errs, errors.New("quest: reward does not exist"))
+			if _, ok := w.Items[quest.Reward]; !ok {
+				errs = append(errs, fmt.Errorf("quest %q: unknown reward %q", questID, quest.Reward))
 			}
 		}
 	}

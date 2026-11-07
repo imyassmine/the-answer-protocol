@@ -3,30 +3,27 @@ package main
 import (
 	"encoding/json"
 	"log/slog"
+	"slices"
 )
 
-func (s *Server) cmdQuests(p *Player, args string) string {
+func (s *Server) cmdQuests(args string) string {
+	if args != "" {
+		return "ERR 400 BAD_REQUEST"
+	}
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	name := p.Name
-	_, ok := s.players[name]
-	if !ok {
-		slog.Error("quests failed: unknown player", "player", name)
-		return "ERR 500 INTERNAL_ERROR"
-	}
-
-	var questIDs []string
+	questIDs := make([]string, 0, len(s.world.Quests))
 	for id := range s.world.Quests {
 		questIDs = append(questIDs, id)
 	}
+	slices.Sort(questIDs)
 
 	data, err := json.Marshal(questIDs)
 	if err != nil {
-		slog.Error("quests marshal failed", "player", name, "error", err)
+		slog.Error("quests marshal failed", "error", err)
 		return "ERR 500 INTERNAL_ERROR"
 	}
-
 	return "OK " + string(data)
 }
 
@@ -37,13 +34,6 @@ func (s *Server) cmdQuest(p *Player, args string) string {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	name := p.Name
-	_, ok := s.players[name]
-	if !ok {
-		slog.Error("quest failed: unknown player", "player", name)
-		return "ERR 500 INTERNAL_ERROR"
-	}
-
 	quest, ok := s.world.Quests[args]
 	if !ok {
 		return "ERR 404 QUEST_NOT_FOUND"
@@ -51,9 +41,8 @@ func (s *Server) cmdQuest(p *Player, args string) string {
 
 	data, err := json.Marshal(quest)
 	if err != nil {
-		slog.Error("quest marshal failed", "player", name, "error", err)
+		slog.Error("quest marshal failed", "player", p.Name, "error", err)
 		return "ERR 500 INTERNAL_ERROR"
 	}
-
 	return "OK " + string(data)
 }
