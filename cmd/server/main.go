@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/imyassmine/tap/internal/world"
+	"github.com/imyassmine/the-answer-protocol/internal/world"
 )
 
 const (

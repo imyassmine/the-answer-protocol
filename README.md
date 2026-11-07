@@ -1,6 +1,6 @@
 # TAP — a multiplayer text adventure in Go
 
-[![CI](https://github.com/imyassmine/tap/actions/workflows/ci.yml/badge.svg)](https://github.com/imyassmine/tap/actions/workflows/ci.yml)
+[![CI](https://github.com/imyassmine/the-answer-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/imyassmine/the-answer-protocol/actions/workflows/ci.yml)
 [![Go 1.26.8+](https://img.shields.io/badge/go-1.26.8%2B-00ADD8.svg)](https://go.dev/dl/)
 ![Standard library only](https://img.shields.io/badge/dependencies-none-success.svg)
 
@@ -48,7 +48,7 @@ Go 1.26.8+ and `make` (a C toolchain is needed for the race-enabled `run-*` targ
 repository root: the server loads `data/world.json` relatively.
 
 ```bash
-git clone https://github.com/imyassmine/tap.git && cd tap
+git clone https://github.com/imyassmine/the-answer-protocol.git && cd the-answer-protocol
 make build           # server + terminal client + web client into bin/
 make run-server      # terminal 1 — TCP :4242
 make run-client      # terminal 2 — terminal client

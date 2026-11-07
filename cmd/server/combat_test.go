@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imyassmine/tap/internal/world"
+	"github.com/imyassmine/the-answer-protocol/internal/world"
 )
 
 // testWorld builds a minimal world with one hostile goblin and one peaceful
